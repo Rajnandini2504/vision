@@ -23,6 +23,7 @@ def process_image_bgr(image_bgr: np.ndarray):
     # Convert to HSV
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
 
+
     # GLARE DETECTION
     lower = np.array([0, 0, 200])
     upper = np.array([180, 60, 255])
@@ -72,8 +73,11 @@ def process_image_bgr(image_bgr: np.ndarray):
     valid_lane_count = 0
 
     if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
+        # OpenCV may return lines as either (N, 1, 4) or (N, 4), depending on
+        # the build. Normalize both forms before unpacking coordinates.
+        line_segments = np.asarray(lines).reshape(-1, 4)
+        for x1, y1, x2, y2 in line_segments:
+            x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
             slope = 0
             if (x2 - x1) != 0:
                 slope = (y2 - y1) / (x2 - x1)
@@ -86,18 +90,23 @@ def process_image_bgr(image_bgr: np.ndarray):
         lane_confidence = min(valid_lane_count * 10, 100)
 
     # STATUS LOGIC
+    # Requirement: after upload + image, if vehicle/lane is not detected then show "Image not found".
+    # We approximate vehicle/lane absence using lane confidence threshold.
+    lane_present = lane_confidence >= 30
+
     status = "SAFE"
     status_color = (0, 255, 0)
 
     if glare_percentage > 18:
         status = "UNSAFE - HIGH GLARE"
         status_color = (0, 0, 255)
-    elif lane_confidence < 30:
-        status = "UNSAFE - LANE LOST"
+    elif not lane_present:
+        status = "Image not found"
         status_color = (0, 0, 255)
     elif glare_percentage > 10 or lane_confidence < 50:
         status = "WARNING"
         status_color = (0, 255, 255)
+
 
     # TEXT OVERLAY
     cv2.putText(
