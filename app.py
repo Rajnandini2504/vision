@@ -3,6 +3,13 @@ import streamlit as st
 import cv2
 import numpy as np
 
+# Optional pretrained object detector. Headlights are accepted only when a
+# vehicle is also detected; this helps reject lamps and bright windows.
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
+
 
 st.set_page_config(
     page_title="Vision Shield AI",
@@ -148,118 +155,117 @@ def detect_lanes(image):
     return output, lane_present, lane_score, lane_status
 
 
-# 2. VEHICLE HEADLIGHT DETECTION
+# 2. VEHICLE + HEADLIGHT DETECTION
 
-def detect_headlights(image):
+@st.cache_resource
+def load_vehicle_model():
+    """Load a small pretrained COCO detector once per Streamlit session."""
+    if YOLO is None:
+        return None
+    try:
+        return YOLO("yolov8n.pt")
+    except Exception:
+        return None
+
+
+def detect_vehicles(image):
+    """Return vehicle boxes; fail closed if the detector is unavailable."""
+    model = load_vehicle_model()
+    if model is None:
+        return []
+
+    try:
+        # COCO classes: car=2, motorcycle=3, bus=5, truck=7.
+        results = model.predict(
+            source=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+            classes=[2, 3, 5, 7],
+            conf=0.35,
+            verbose=False
+        )
+        boxes = []
+        if results and results[0].boxes is not None:
+            for box in results[0].boxes.xyxy.cpu().numpy():
+                x1, y1, x2, y2 = [int(v) for v in box]
+                boxes.append((x1, y1, x2, y2))
+        return boxes
+    except Exception:
+        return []
+
+
+def detect_headlights(image, vehicle_boxes):
     height, width = image.shape[:2]
-
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
     lower = np.array([0, 0, 215], dtype=np.uint8)
     upper = np.array([180, 110, 255], dtype=np.uint8)
-
     bright_mask = cv2.inRange(hsv, lower, upper)
-
     bright_mask = cv2.morphologyEx(
-        bright_mask,
-        cv2.MORPH_OPEN,
-        np.ones((3, 3), np.uint8)
+        bright_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)
+    )
+    contours, _ = cv2.findContours(
+        bright_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    contours, _ = cv2.findContours(
-        bright_mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
+    # No detected vehicle = no headlight detection. This is the key fix for
+    # indoor lamps/windows being mistaken for headlights.
+    if not vehicle_boxes:
+        return [], np.zeros((height, width), dtype=np.uint8), False
 
     candidates = []
-
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
         area = cv2.contourArea(contour)
-
-        # Tiny bright specks (lamp reflections, image artifacts, window
-        # glints) should not count as headlights. Use size thresholds
-        # relative to the image resolution instead of a fixed pixel count.
-        min_contour_area = max(20, int(height * width * 0.00008))
-        if area < min_contour_area:
+        if area < max(20, int(height * width * 0.00008)):
             continue
-
-        # Reject huge bright areas, upper-frame sky/window regions, and
-        # tiny boxes that are unlikely to be a visible vehicle headlight.
         if w * h > height * width * 0.02:
             continue
         if w < width * 0.008 or h < height * 0.008:
             continue
-        if y < height * 0.40 or (y + h) > height * 0.92:
+        if y < height * 0.30 or (y + h) > height * 0.95:
             continue
-
-        center_x = x + w / 2.0
-        if not width * 0.12 <= center_x <= width * 0.88:
-            continue
-
         ratio = w / float(max(h, 1))
-        if 0.35 <= ratio <= 2.8:
+        if not 0.35 <= ratio <= 2.8:
+            continue
+
+        cx, cy = x + w / 2.0, y + h / 2.0
+        # Candidate must lie inside a detected vehicle box (with a small margin).
+        belongs_to_vehicle = any(
+            x1 - 0.03 * width <= cx <= x2 + 0.03 * width
+            and y1 - 0.03 * height <= cy <= y2 + 0.03 * height
+            for x1, y1, x2, y2 in vehicle_boxes
+        )
+        if belongs_to_vehicle:
             candidates.append((x, y, w, h))
 
-    # Find two bright regions that could be a headlight pair.
     pairs = []
-
     for i, first in enumerate(candidates):
         x1, y1, w1, h1 = first
-
+        c1x, c1y = x1 + w1 / 2.0, y1 + h1 / 2.0
         for second in candidates[i + 1:]:
             x2, y2, w2, h2 = second
-
-            center1 = (x1 + w1 / 2, y1 + h1 / 2)
-            center2 = (x2 + w2 / 2, y2 + h2 / 2)
-
-            gap = abs(center1[0] - center2[0])
-
-            same_level = (
-                abs(center1[1] - center2[1])
-                <= max(h1, h2) * 1.5
-            )
-
-            similar_size = (
-                0.35 <= (w1 * h1) / float(max(w2 * h2, 1)) <= 2.85
-            )
-
-            reasonable_gap = (
-                max(w1, w2) * 2.0
-                <= gap
-                <= width * 0.28
-            )
-
-            # A plausible pair should have a meaningful horizontal
-            # separation and should not be almost at the image edges.
-            pair_center = (center1[0] + center2[0]) / 2.0
-            centered_pair = width * 0.20 <= pair_center <= width * 0.80
-
+            c2x, c2y = x2 + w2 / 2.0, y2 + h2 / 2.0
+            gap = abs(c1x - c2x)
+            same_level = abs(c1y - c2y) <= max(h1, h2) * 1.5
+            similar_size = 0.35 <= (w1 * h1) / float(max(w2 * h2, 1)) <= 2.85
+            reasonable_gap = max(w1, w2) * 2.0 <= gap <= width * 0.35
+            pair_center = (c1x + c2x) / 2.0
+            centered_pair = width * 0.10 <= pair_center <= width * 0.90
             if same_level and similar_size and reasonable_gap and centered_pair:
-                pairs.append((first, second))
+                # Both candidates must belong to the same detected vehicle.
+                same_vehicle = any(
+                    x1b - 0.03 * width <= c1x <= x2b + 0.03 * width
+                    and x1b - 0.03 * width <= c2x <= x2b + 0.03 * width
+                    and y1b - 0.03 * height <= c1y <= y2b + 0.03 * height
+                    and y1b - 0.03 * height <= c2y <= y2b + 0.03 * height
+                    for x1b, y1b, x2b, y2b in vehicle_boxes
+                )
+                if same_vehicle:
+                    pairs.append((first, second))
 
-    # Keep the first candidate pair for this simple version.
     selected = list(pairs[0]) if pairs else []
-
-    headlight_mask = np.zeros(
-        (height, width),
-        dtype=np.uint8
-    )
-
+    headlight_mask = np.zeros((height, width), dtype=np.uint8)
     for x, y, w, h in selected:
-        cv2.rectangle(
-            headlight_mask,
-            (x, y),
-            (x + w, y + h),
-            255,
-            -1
-        )
-
-    headlights_present = len(selected) == 2
-
-    return selected, headlight_mask, headlights_present
-
+        cv2.rectangle(headlight_mask, (x, y), (x + w, y + h), 255, -1)
+    return selected, headlight_mask, len(selected) == 2
 
 
 # 3. PROCESS THE IMAGE
@@ -272,8 +278,9 @@ def process_image(image):
     # Use a copy because headlight drawing must not change input.
     headlight_input = image.copy()
 
+    vehicle_boxes = detect_vehicles(headlight_input)
     headlights, headlight_mask, headlights_present = (
-        detect_headlights(headlight_input)
+        detect_headlights(headlight_input, vehicle_boxes)
     )
 
     # Measure brightness inside the detected headlight regions.
@@ -469,7 +476,14 @@ if uploaded is not None:
     st.write("Lane result:", lane_status)
     st.write("Headlight result:", glare_status)
 
+    if YOLO is None:
+        st.warning(
+            "Vehicle detector package is unavailable. Headlight detection is disabled; "
+            "install ultralytics from requirements.txt and redeploy."
+        )
+
     st.caption(
-        "Prototype only: these are image-based heuristic scores, "
-        "not calibrated glare measurements or certified road-safety decisions."
+        "Prototype only: lane detection uses image-processing heuristics and "
+        "headlight candidates require a detected vehicle. Brightness is an estimate, "
+        "not a calibrated glare measurement or certified road-safety decision."
     )
