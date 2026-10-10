@@ -93,36 +93,3 @@ def detect_lanes(image):
     right_detected = len(right_lines) > 0
     left_horizon = []
     right_horizon = []
-
-    for x1, y1, x2, y2 in left_lines:
-        slope = (y2 - y1) / float(x2 - x1)
-        if abs(slope) > 0.001:
-            horizon_x = x1 + (height * 0.55 - y1) / slope
-            left_horizon.append(horizon_x)
-
-    for x1, y1, x2, y2 in right_lines:
-        slope = (y2 - y1) / float(x2 - x1)
-        if abs(slope) > 0.001:
-            horizon_x = x1 + (height * 0.55 - y1) / slope
-            right_horizon.append(horizon_x)
-
-    lane_present = False
-
-    if left_horizon and right_horizon:
-        left_x = float(np.median(left_horizon))
-        right_x = float(np.median(right_horizon))
-
-        lane_present = (
-            0.20 * width <= left_x <= 0.80 * width
-            and 0.20 * width <= right_x <= 0.80 * width
-            and abs(left_x - right_x) <= 0.25 * width
-        )
-
-    # Evidence score only; it is not a road-safety percentage.
-    if lane_present:
-        lane_score = 100
-        lane_status = "BOTH LANE SIDES DETECTED - GEOMETRY CHECK PASSED"
-    elif left_detected and right_detected:
-        lane_score = 25
-        lane_status = "LINES FOUND BUT LANE GEOMETRY NOT VERIFIED"
-    elif left_detected or right_detected:
