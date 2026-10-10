@@ -439,7 +439,7 @@ if uploaded is not None:
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
             use_container_width=True
         )
-        )
+        
         st.stop()
 
     col1, col2 = st.columns(2)
