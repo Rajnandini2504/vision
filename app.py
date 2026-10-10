@@ -90,25 +90,25 @@ def process_image_bgr(image_bgr: np.ndarray):
         lane_confidence = min(valid_lane_count * 10, 100)
 
     
-# STATUS LOGIC
-# These are heuristic thresholds, not certified road-safety measurements.
-lane_present = lane_confidence >= 30
-
-if glare_percentage > 18:
-    status = "UNSAFE - HIGH BRIGHT-PIXEL LEVEL"
-    status_color = (0, 0, 255)
-
-elif not lane_present:
-    status = "NO LANE DETECTED"
-    status_color = (0, 0, 255)
-
-elif glare_percentage > 10 or lane_confidence < 50:
-    status = "WARNING - REVIEW IMAGE"
-    status_color = (0, 255, 255)
-
-else:
-    status = "LANE DETECTED - REVIEW REQUIRED"
-    status_color = (0, 255, 0)
+        # STATUS LOGIC
+        # These are heuristic thresholds, not certified road-safety measurements.
+        lane_present = lane_confidence >= 30
+        
+        if glare_percentage > 18:
+            status = "UNSAFE - HIGH BRIGHT-PIXEL LEVEL"
+            status_color = (0, 0, 255)
+        
+        elif not lane_present:
+            status = "NO LANE DETECTED"
+            status_color = (0, 0, 255)
+        
+        elif glare_percentage > 10 or lane_confidence < 50:
+            status = "WARNING - REVIEW IMAGE"
+            status_color = (0, 255, 255)
+        
+        else:
+            status = "LANE DETECTED - REVIEW REQUIRED"
+            status_color = (0, 255, 0)
 
 
 
