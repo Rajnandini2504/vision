@@ -166,6 +166,18 @@ if image_bgr is None:
 
 output_bgr, glare_percentage, lane_confidence, status = process_image_bgr(image_bgr)
 
+
+# Validate whether lane markings were detected
+if lane_confidence < 30:
+    st.error(
+        "Road or lane markings not detected. "
+        "Please upload a clear road image with visible lane markings."
+    )
+    st.subheader("Uploaded Image")
+    st.image(image_bgr[:, :, ::-1], channels="RGB")
+    st.stop()
+
+
 # Save to a temp output folder (so Streamlit can show it)
 os.makedirs("outputs/processed_images", exist_ok=True)
 output_path = os.path.join("outputs/processed_images", f"{uuid.uuid4().hex}.png")
