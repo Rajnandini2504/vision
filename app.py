@@ -167,14 +167,10 @@ if image_bgr is None:
 output_bgr, glare_percentage, lane_confidence, status = process_image_bgr(image_bgr)
 
 
-# Validate whether lane markings were detected
-if lane_confidence < 30:
+if not lane_present and not headlights_present:
     st.error(
-        "Road or lane markings not detected. "
-        "Please upload a clear road image with visible lane markings."
+        "Invalid Image: No Road Lane or Vehicle Headlights Detected."
     )
-    st.subheader("Uploaded Image")
-    st.image(image_bgr[:, :, ::-1], channels="RGB")
     st.stop()
 
 
