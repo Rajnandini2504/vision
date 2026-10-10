@@ -435,11 +435,11 @@ if uploaded is not None:
             f"paired headlight candidates: {headlights_present}. "
             "These are rule-based checks, not a trained road-scene classifier."
         )
-         st.image(
+        st.image(
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+            caption="Uploaded image",
             use_container_width=True
         )
-        
         st.stop()
 
     col1, col2 = st.columns(2)
@@ -448,14 +448,14 @@ if uploaded is not None:
         st.subheader("Original Image")
         st.image(
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
-            width="stretch"
+            use_container_width=True
         )
 
     with col2:
         st.subheader("Processed Image")
         st.image(
             cv2.cvtColor(output, cv2.COLOR_BGR2RGB),
-            width="stretch"
+            use_container_width=True
         )
 
     st.subheader("Detection Results")
