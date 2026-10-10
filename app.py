@@ -93,3 +93,352 @@ def detect_lanes(image):
     right_detected = len(right_lines) > 0
     left_horizon = []
     right_horizon = []
+
+    for x1, y1, x2, y2 in left_lines:
+        slope = (y2 - y1) / float(x2 - x1)
+        if abs(slope) > 0.001:
+            horizon_x = x1 + (height * 0.55 - y1) / slope
+            left_horizon.append(horizon_x)
+
+    for x1, y1, x2, y2 in right_lines:
+        slope = (y2 - y1) / float(x2 - x1)
+        if abs(slope) > 0.001:
+            horizon_x = x1 + (height * 0.55 - y1) / slope
+            right_horizon.append(horizon_x)
+
+    lane_present = False
+
+    if left_horizon and right_horizon:
+        left_x = float(np.median(left_horizon))
+        right_x = float(np.median(right_horizon))
+
+        lane_present = (
+            0.20 * width <= left_x <= 0.80 * width
+            and 0.20 * width <= right_x <= 0.80 * width
+            and abs(left_x - right_x) <= 0.25 * width
+        )
+
+    # Evidence score only; it is not a road-safety percentage.
+    if lane_present:
+        lane_score = 100
+        lane_status = "BOTH LANE SIDES DETECTED - GEOMETRY CHECK PASSED"
+    elif left_detected and right_detected:
+        lane_score = 25
+        lane_status = "LINES FOUND BUT LANE GEOMETRY NOT VERIFIED"
+    elif left_detected or right_detected:
+        lane_score = 50
+        lane_status = "PARTIAL LANE CANDIDATE - WARNING"
+    else:
+        lane_score = 0
+        lane_status = "LANE NOT DETECTED"
+
+
+    return output, lane_present, lane_score, lane_status
+
+
+# 2. VEHICLE HEADLIGHT DETECTION
+
+def detect_headlights(image):
+    height, width = image.shape[:2]
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    lower = np.array([0, 0, 215], dtype=np.uint8)
+    upper = np.array([180, 110, 255], dtype=np.uint8)
+
+    bright_mask = cv2.inRange(hsv, lower, upper)
+
+    bright_mask = cv2.morphologyEx(
+        bright_mask,
+        cv2.MORPH_OPEN,
+        np.ones((3, 3), np.uint8)
+    )
+
+    contours, _ = cv2.findContours(
+        bright_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candidates = []
+
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = cv2.contourArea(contour)
+
+        if area < 5:
+            continue
+
+        # Reject large bright regions and candidates near the top
+        # of the frame, where sky/reflections often occur.
+        if w * h > height * width * 0.02:
+            continue
+
+        if y < height * 0.30:
+            continue
+
+        ratio = w / float(max(h, 1))
+
+        if 0.3 <= ratio <= 3.0:
+            candidates.append((x, y, w, h))
+
+    # Find two bright regions that could be a headlight pair.
+    pairs = []
+
+    for i, first in enumerate(candidates):
+        x1, y1, w1, h1 = first
+
+        for second in candidates[i + 1:]:
+            x2, y2, w2, h2 = second
+
+            center1 = (x1 + w1 / 2, y1 + h1 / 2)
+            center2 = (x2 + w2 / 2, y2 + h2 / 2)
+
+            gap = abs(center1[0] - center2[0])
+
+            same_level = (
+                abs(center1[1] - center2[1])
+                <= max(h1, h2) * 1.5
+            )
+
+            similar_size = (
+                0.35 <= (w1 * h1) / float(max(w2 * h2, 1)) <= 2.85
+            )
+
+            reasonable_gap = (
+                max(w1, w2) * 1.2
+                <= gap
+                <= width * 0.60
+            )
+
+            if same_level and similar_size and reasonable_gap:
+                pairs.append((first, second))
+
+    # Keep the first candidate pair for this simple version.
+    selected = list(pairs[0]) if pairs else []
+
+    headlight_mask = np.zeros(
+        (height, width),
+        dtype=np.uint8
+    )
+
+    for x, y, w, h in selected:
+        cv2.rectangle(
+            headlight_mask,
+            (x, y),
+            (x + w, y + h),
+            255,
+            -1
+        )
+
+    headlights_present = len(selected) == 2
+
+    return selected, headlight_mask, headlights_present
+
+
+
+# 3. PROCESS THE IMAGE
+
+def process_image(image):
+    output, lane_present, lane_score, lane_status = (
+        detect_lanes(image)
+    )
+
+    # Use a copy because headlight drawing must not change input.
+    headlight_input = image.copy()
+
+    headlights, headlight_mask, headlights_present = (
+        detect_headlights(headlight_input)
+    )
+
+    # Measure brightness inside the detected headlight regions.
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    brightness = hsv[:, :, 2]
+
+    if headlights_present:
+        values = []
+
+        for x, y, w, h in headlights:
+            values.extend(
+                brightness[y:y + h, x:x + w].flatten().tolist()
+            )
+
+        
+        if values:
+            pixel_values = np.asarray(values, dtype=np.float32)
+        
+            # Average brightness of detected headlight regions
+            mean_brightness = np.mean(pixel_values) / 255 * 100
+        
+            # Percentage of pixels that are nearly white
+            very_bright_percentage = (
+                np.count_nonzero(pixel_values >= 240)
+                / pixel_values.size
+            ) * 100
+        
+            # Experimental image-based brightness indicator
+            glare_score = (
+                0.70 * mean_brightness
+                + 0.30 * very_bright_percentage
+            )
+        else:
+            glare_score = 0
+
+
+        for x, y, w, h in headlights:
+            cv2.rectangle(
+                output,
+                (x, y),
+                (x + w, y + h),
+                (0, 255, 255),
+                2
+            )
+    else:
+        glare_score = 0
+
+    valid_image = lane_present or headlights_present
+
+    if not valid_image:
+        overall_status = "INVALID IMAGE"
+        glare_status = "HEADLIGHTS NOT DETECTED"
+        lane_status = "LANE NOT CLEARLY DETECTED"
+
+    else:
+        if headlights_present:
+            if glare_score >= 85:
+                glare_status = "HIGH BRIGHTNESS - UNSAFE WARNING"
+            elif glare_score >= 65:
+                glare_status = "MODERATE BRIGHTNESS - WARNING"
+            else:
+                glare_status = "LOWER BRIGHTNESS - REVIEW"
+
+        else:
+            glare_status = "HEADLIGHTS NOT DETECTED"
+
+        if lane_present:
+            lane_status = "LANE DETECTED - REVIEW ALIGNMENT"
+        else:
+            lane_status = "LANE NOT CLEARLY DETECTED"
+
+        if headlights_present and glare_score >= 85:
+            overall_status = "WARNING - HIGH HEADLIGHT BRIGHTNESS"
+        elif lane_present and headlights_present:
+            overall_status = "LANE + HEADLIGHTS DETECTED"
+        elif lane_present:
+            overall_status = "LANE DETECTED"
+        else:
+            overall_status = "HEADLIGHTS DETECTED"
+
+    cv2.putText(
+        output,
+        f"Lane score: {lane_score}%",
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (0, 255, 0),
+        2
+    )
+
+    cv2.putText(
+        output,
+        f"Headlight brightness: {glare_score:.1f}%",
+        (20, 65),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.60,
+        (0, 255, 255),
+        2
+    )
+
+    return (
+        output,
+        valid_image,
+        lane_present,
+        lane_score,
+        lane_status,
+        headlights_present,
+        glare_score,
+        glare_status,
+        overall_status
+    )
+
+
+# 4. STREAMLIT USER INTERFACE
+
+uploaded = st.file_uploader(
+    "Upload a road image",
+    type=["jpg", "jpeg", "png"]
+)
+
+if uploaded is not None:
+    data = np.frombuffer(
+        uploaded.getvalue(),
+        dtype=np.uint8
+    )
+
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+    if image is None:
+        st.error("Image could not be opened.")
+        st.stop()
+
+    (
+        output,
+        valid_image,
+        lane_present,
+        lane_score,
+        lane_status,
+        headlights_present,
+        glare_score,
+        glare_status,
+        overall_status
+    ) = process_image(image)
+
+    if not valid_image:
+        st.error(
+            "Invalid image: no clear lane or paired headlights detected."
+        )
+        st.image(
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+            caption="Uploaded image",
+            width="stretch"
+        )
+        st.stop()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Original Image")
+        st.image(
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
+            width="stretch"
+        )
+
+    with col2:
+        st.subheader("Processed Image")
+        st.image(
+            cv2.cvtColor(output, cv2.COLOR_BGR2RGB),
+            width="stretch"
+        )
+
+    st.subheader("Detection Results")
+    st.write("Overall status:", overall_status)
+
+    m1, m2 = st.columns(2)
+
+    m1.metric(
+        "Lane Detection Score",
+        f"{lane_score}%"
+    )
+
+    m2.metric(
+        "Estimated Headlight Brightness Index",
+         f"{glare_score:.1f}%"
+    )
+
+    st.write("Lane result:", lane_status)
+    st.write("Headlight result:", glare_status)
+
+    st.caption(
+        "Prototype only: these are image-based heuristic scores, "
+        "not calibrated glare measurements or certified road-safety decisions."
+    )
