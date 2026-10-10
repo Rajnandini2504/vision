@@ -435,10 +435,10 @@ if uploaded is not None:
             f"paired headlight candidates: {headlights_present}. "
             "These are rule-based checks, not a trained road-scene classifier."
         )
-        st.image(
+         st.image(
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
-            caption="Uploaded image",
-            width="stretch"
+            use_container_width=True
+        )
         )
         st.stop()
 
