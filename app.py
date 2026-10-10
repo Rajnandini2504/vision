@@ -86,19 +86,25 @@ def detect_lanes(image):
             3
         )
 
-    # Both sides provide stronger lane evidence.
-    lane_present = bool(left_lines and right_lines)
-
-    lane_score = min(
-        100,
-        (50 if left_lines else 0) +
-        (50 if right_lines else 0)
+    
+    # Lane evidence score based on detected sides
+    left_detected = len(left_lines) > 0
+    right_detected = len(right_lines) > 0
+    
+    lane_score = (
+        (50 if left_detected else 0)
+        + (50 if right_detected else 0)
     )
-
-    if lane_present:
-        lane_status = "LANE VISIBLE - REVIEW ALIGNMENT"
+    
+    lane_present = left_detected and right_detected
+    
+    if left_detected and right_detected:
+        lane_status = "BOTH LANE SIDES DETECTED - ALIGNMENT NOT VERIFIED"
+    elif left_detected or right_detected:
+        lane_status = "PARTIAL LANE DETECTION - WARNING"
     else:
-        lane_status = "LANE NOT CLEARLY DETECTED"
+        lane_status = "LANE NOT DETECTED"
+
 
     return output, lane_present, lane_score, lane_status
 
@@ -229,10 +235,27 @@ def process_image(image):
                 brightness[y:y + h, x:x + w].flatten().tolist()
             )
 
-        glare_score = (
-            float(np.mean(values)) / 255 * 100
-            if values else 0
-        )
+        
+        if values:
+            pixel_values = np.asarray(values, dtype=np.float32)
+        
+            # Average brightness of detected headlight regions
+            mean_brightness = np.mean(pixel_values) / 255 * 100
+        
+            # Percentage of pixels that are nearly white
+            very_bright_percentage = (
+                np.count_nonzero(pixel_values >= 240)
+                / pixel_values.size
+            ) * 100
+        
+            # Experimental image-based brightness indicator
+            glare_score = (
+                0.70 * mean_brightness
+                + 0.30 * very_bright_percentage
+            )
+        else:
+            glare_score = 0
+
 
         for x, y, w, h in headlights:
             cv2.rectangle(
@@ -380,8 +403,8 @@ if uploaded is not None:
     )
 
     m2.metric(
-        "Estimated Headlight Brightness",
-        f"{glare_score:.1f}%"
+        "Estimated Headlight Brightness Index",
+         f"{glare_score:.1f}%"
     )
 
     st.write("Lane result:", lane_status)
