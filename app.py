@@ -64,10 +64,16 @@ def detect_lanes(image):
             angle = abs(np.degrees(np.arctan(slope)))
             mid_x = (x1 + x2) / 2
 
-            if not 25 <= angle <= 75:
+            # Generic road-lane checks: require long, lower-frame
+            # segments with a plausible lane-marking angle.
+            line_length = float(np.hypot(dx, dy))
+            if not 30 <= angle <= 70:
                 continue
 
-            if max(y1, y2) < height * 0.60:
+            if line_length < height * 0.15:
+                continue
+
+            if max(y1, y2) < height * 0.65:
                 continue
 
             if slope < 0 and mid_x < width * 0.60:
@@ -108,14 +114,20 @@ def detect_lanes(image):
 
     lane_present = False
 
-    if left_horizon and right_horizon:
+    if (
+        len(left_lines) >= 2
+        and len(right_lines) >= 2
+        and left_horizon
+        and right_horizon
+    ):
         left_x = float(np.median(left_horizon))
         right_x = float(np.median(right_horizon))
 
         lane_present = (
             0.20 * width <= left_x <= 0.80 * width
             and 0.20 * width <= right_x <= 0.80 * width
-            and abs(left_x - right_x) <= 0.25 * width
+            and abs(left_x - right_x) <= 0.20 * width
+            and left_x < right_x
         )
 
     # Evidence score only; it is not a road-safety percentage.
@@ -174,7 +186,7 @@ def detect_headlights(image):
         if w * h > height * width * 0.02:
             continue
 
-        if y < height * 0.30:
+        if y < height * 0.35:
             continue
 
         ratio = w / float(max(h, 1))
@@ -206,9 +218,9 @@ def detect_headlights(image):
             )
 
             reasonable_gap = (
-                max(w1, w2) * 1.2
+                max(w1, w2) * 1.5
                 <= gap
-                <= width * 0.60
+                <= width * 0.30
             )
 
             if same_level and similar_size and reasonable_gap:
@@ -395,7 +407,13 @@ if uploaded is not None:
 
     if not valid_image:
         st.error(
-            "Invalid image: no clear lane or paired headlights detected."
+            "Invalid image: no clear lane geometry or paired headlight-like "
+            "regions detected. This image should not be analyzed as a road scene."
+        )
+        st.caption(
+            f"Validation details — lane geometry: {lane_present}; "
+            f"paired headlight candidates: {headlights_present}. "
+            "These are rule-based checks, not a trained road-scene classifier."
         )
         st.image(
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
