@@ -178,20 +178,28 @@ def detect_headlights(image):
         x, y, w, h = cv2.boundingRect(contour)
         area = cv2.contourArea(contour)
 
-        if area < 5:
+        # Tiny bright specks (lamp reflections, image artifacts, window
+        # glints) should not count as headlights. Use size thresholds
+        # relative to the image resolution instead of a fixed pixel count.
+        min_contour_area = max(20, int(height * width * 0.00008))
+        if area < min_contour_area:
             continue
 
-        # Reject large bright regions and candidates near the top
-        # of the frame, where sky/reflections often occur.
+        # Reject huge bright areas, upper-frame sky/window regions, and
+        # tiny boxes that are unlikely to be a visible vehicle headlight.
         if w * h > height * width * 0.02:
             continue
+        if w < width * 0.008 or h < height * 0.008:
+            continue
+        if y < height * 0.40 or (y + h) > height * 0.92:
+            continue
 
-        if y < height * 0.35:
+        center_x = x + w / 2.0
+        if not width * 0.12 <= center_x <= width * 0.88:
             continue
 
         ratio = w / float(max(h, 1))
-
-        if 0.3 <= ratio <= 3.0:
+        if 0.35 <= ratio <= 2.8:
             candidates.append((x, y, w, h))
 
     # Find two bright regions that could be a headlight pair.
@@ -218,12 +226,17 @@ def detect_headlights(image):
             )
 
             reasonable_gap = (
-                max(w1, w2) * 1.5
+                max(w1, w2) * 2.0
                 <= gap
-                <= width * 0.30
+                <= width * 0.28
             )
 
-            if same_level and similar_size and reasonable_gap:
+            # A plausible pair should have a meaningful horizontal
+            # separation and should not be almost at the image edges.
+            pair_center = (center1[0] + center2[0]) / 2.0
+            centered_pair = width * 0.20 <= pair_center <= width * 0.80
+
+            if same_level and similar_size and reasonable_gap and centered_pair:
                 pairs.append((first, second))
 
     # Keep the first candidate pair for this simple version.
