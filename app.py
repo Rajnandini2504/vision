@@ -12,11 +12,11 @@ except ImportError:
 
 
 st.set_page_config(
-    page_title="Vision Shield AI - Lane + Glare System",
+    page_title="Vision Shield AI - Lane + Glare Safety",
     layout="wide"
 )
 
-st.title("Vision Shield AI - Lane + Glare System")
+st.title("Vision Shield AI - Lane + Glare Safety")
 st.write("Road Lane Detection and Vehicle Headlight Glare Analysis")
 
 
