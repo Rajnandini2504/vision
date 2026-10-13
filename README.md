@@ -1,4 +1,4 @@
-# Vision Shield AI – Lane and Headlight Glare Analysis
+# Vision Shield AI – Lane + Glare Safety
 
 ## Project Overview
 Vision Shield AI is a Python-based image-processing application designed to analyze road lane markings and bright regions that may correspond to vehicle headlights. The application uses computer vision techniques to provide preliminary visual analysis of uploaded images.
